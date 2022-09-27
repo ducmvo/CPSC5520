@@ -9,6 +9,7 @@ if len(sys.argv) != 3:
     
 host = sys.argv[1]
 port = int(sys.argv[2])
+msg = 'JOIN'
 
 def connect(host, port, msg):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -16,17 +17,23 @@ def connect(host, port, msg):
         picklestring = pickle.dumps(msg)
         s.sendall(picklestring)
         data = s.recv(1024)
-        res = pickle.loads(data)
-        return res;  
-res = connect(host, port, 'JOIN')
-for server in res:
-    host = server.get('host')
-    port = server.get('port')
-    print('Hello to ', server) 
+        response = pickle.loads(data)
+        return response;  
+    
+# Join Group Coordinator Daemon (GCD) server
+print(f'JOIN {(host, port)}')
+group = connect(host, port, msg)
+
+msg = 'HELLO'
+for member in group:
+    host = member.get('host')
+    port = member.get('port')
+    print(f'{msg} to {member}') 
     try: 
-        print(connect(host, port, 'HELLO'))
+        response = connect(host, port, msg)
+        print(response)
     except ConnectionRefusedError as e:
-        print('fail to connect: ', e)
+        print(f'fail to connect: {e}')
 
 
 
