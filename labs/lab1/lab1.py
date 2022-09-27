@@ -22,7 +22,11 @@ res = connect(host, port, 'JOIN')
 for server in res:
     host = server.get('host')
     port = server.get('port')
-    print('Hello to ', server, connect(host, port, 'HELLO'))
+    print('Hello to ', server) 
+    try: 
+        print(connect(host, port, 'HELLO'))
+    except ConnectionRefusedError as e:
+        print('fail to connect: ', e)
 
 
 
