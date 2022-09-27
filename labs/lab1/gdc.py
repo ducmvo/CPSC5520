@@ -18,8 +18,7 @@ class GroupCoordinatorDaemon(socketserver.BaseRequestHandler):
 
     For Lab1, we just respond with a fixed list of two servers.
     """
-    JOIN_RESPONSE = [{'host': 'cs1.seattleu.edu', 'port': 10000},
-            {'host': 'cs2.seattleu.edu', 'port': 33313},
+    JOIN_RESPONSE = [{'host': 'localhost', 'port': 10000},
             {'host': 'localhost', 'port': 23015}]
 
     def handle(self):

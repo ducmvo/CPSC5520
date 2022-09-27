@@ -9,11 +9,22 @@ if len(sys.argv) != 3:
     
 host = sys.argv[1]
 port = int(sys.argv[2])
-with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-    s.connect((host, port))
-    picklestring = pickle.dumps('JOIN')
-    s.sendall(picklestring)
-    data = s.recv(1024)
-    res = pickle.loads(data)
-    for r in res:
-        print('HELLO to ', repr(r))
+
+def connect(host, port, msg):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.connect((host, port))
+        picklestring = pickle.dumps(msg)
+        s.sendall(picklestring)
+        data = s.recv(1024)
+        res = pickle.loads(data)
+        return res;  
+res = connect(host, port, 'JOIN')
+for server in res:
+    host = server.get('host')
+    port = server.get('port')
+    print('Hello to ', server, connect(host, port, 'HELLO'))
+
+
+
+
+
