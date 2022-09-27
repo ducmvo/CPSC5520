@@ -17,5 +17,3 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
     res = pickle.loads(data)
     for r in res:
         print('HELLO to ', repr(r))
-        s.connect((r.get('host'), r.get('port')))
-        s.sendall(picklestring)
