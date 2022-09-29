@@ -3,6 +3,7 @@ CPSC-5520, Seattle University
 This is lab1 assignment of Distributed System class
 :Authors: Duc Vo
 :Version: 1
+:Date: 09/28/2022
 """
 
 import socket
