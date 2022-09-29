@@ -53,7 +53,7 @@ class SimpleClient:
         print(message, self.server_address)
         try:
             self.group = self.__message(self.server_address, message)
-        except (socket.timeout, ConnectionError, pickle.PickleError) as e:
+        except (socket.timeout, ConnectionError, OSError, pickle.PickleError) as e:
             print('Error: ', e)
         return self.group
 
@@ -67,7 +67,7 @@ class SimpleClient:
             try:
                 res = self.__message(member_address, message)
                 print(res)
-            except (socket.timeout, ConnectionError, pickle.PickleError) as e:
+            except (socket.timeout, ConnectionError, OSError, pickle.PickleError) as e:
                 print('Error: ', e)
 
 
