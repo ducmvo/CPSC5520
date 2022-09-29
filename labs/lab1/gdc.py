@@ -8,6 +8,7 @@ import pickle
 import socketserver
 import sys
 
+
 BUF_SZ = 1024 # tcp receive buffer size
 
 
@@ -19,7 +20,8 @@ class GroupCoordinatorDaemon(socketserver.BaseRequestHandler):
     For Lab1, we just respond with a fixed list of two servers.
     """
     JOIN_RESPONSE = [{'host': 'localhost', 'port': 10000},
-            {'host': 'localhost', 'port': 23015}]
+                     {'host': 'localhost', 'port': 23015},
+                     {'host': 'localhost', 'port': 31245}]
 
     def handle(self):
         """
@@ -45,4 +47,5 @@ if __name__ == '__main__':
         exit(1)
     port = int(sys.argv[1])
     with socketserver.TCPServer(('', port), GroupCoordinatorDaemon) as server:
+        print("GDC Server Listening on port ", port)
         server.serve_forever()
