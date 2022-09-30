@@ -45,6 +45,7 @@ class SimpleClient:
         pickled_msg = pickle.dumps(message)
         sock.sendall(pickled_msg)
         data = sock.recv(buf_sz)
+        sock.close()
         return pickle.loads(data)
 
     def join(self, message):
