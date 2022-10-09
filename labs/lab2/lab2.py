@@ -152,7 +152,7 @@ class Peer:
             return sock
 
     def is_election_in_progress(self):
-        return self.get_state() == State.WAITING_FOR_VICTOR
+        return self.get_state() in (State.WAITING_FOR_VICTOR, State.WAITING_FOR_OK)
 
     def is_expired(self, peer=None, threshold=ASSUME_FAILURE_TIMEOUT):
         if peer is None:
