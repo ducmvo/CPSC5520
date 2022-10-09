@@ -93,7 +93,7 @@ class Peer:
             if state == State.SEND_OK:
                 if not self.is_election_in_progress():
                     self.start_election('NOT HAVE AN ELECTION IN PROGRESS')
-                    self.set_quiescent(peer)
+                self.set_quiescent(peer)
 
             if state == State.SEND_VICTORY:
                 self.set_state(State.WAITING_FOR_ANY_MESSAGE)
@@ -136,7 +136,6 @@ class Peer:
     def check_timeouts(self):
         if self.is_expired():
             self.declare_victory('TIME OUT WAITING FOR OK')
-            self.set_state(State.WAITING_FOR_ANY_MESSAGE)
 
     def get_connection(self, member):
         try:
