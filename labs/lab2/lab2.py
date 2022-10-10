@@ -59,7 +59,9 @@ class Peer:
                     self.send_message(key.fileobj)
                 else:
                     self.set_quiescent(key.fileobj)
-            # self.check_timeouts()  # if run out of time and NOT receive any OK
+
+            # if run out of time and NOT receive any OK
+            self.check_timeouts()
 
     def accept_peer(self):
         """Callback for new connections"""
@@ -83,9 +85,11 @@ class Peer:
         try:
             self.send(self, peer, state.value, self.members)
         except ConnectionError as e:
-            print(e)
+            # print(e)
+            pass
         except Exception as e:
-            print(e)
+            # print(e)
+            pass
         else:
             if state == State.SEND_ELECTION:
                 self.set_state(State.WAITING_FOR_OK, peer, True)
@@ -97,7 +101,7 @@ class Peer:
 
             if state == State.SEND_VICTORY:
                 self.set_state(State.WAITING_FOR_ANY_MESSAGE)
-                self.set_leader(self)
+                self.set_leader(self.pid)
                 self.set_quiescent(peer)
 
     def receive_message(self, peer):  # selectors.EVENT_READ
@@ -112,7 +116,7 @@ class Peer:
             print(e)
         else:
             message, members = data
-            print('"{}" RECEIVED! THANKS '.format(message))
+            print('"{}" RECEIVED'.format(message))
             if message == State.SEND_OK.value:  # received OK
                 self.set_quiescent(peer)
                 self.set_state(State.WAITING_FOR_VICTOR)
@@ -129,27 +133,28 @@ class Peer:
                 self.set_state(State.SEND_OK, peer, True)  # switch to write
 
             if message == State.SEND_VICTORY.value:  # received COORDINATOR
+                bully = (0, 0)
+                for pid in members:
+                    if pid[0] > bully[0] or pid[0] == bully[0] and pid[1] > bully[1]:
+                        bully = pid
+                self.set_leader(bully)
+                self.set_quiescent(peer)
                 self.set_state(State.WAITING_FOR_ANY_MESSAGE)
-                print('COORDINATOR RECEIVED!!', peer.getsockname(), peer.getpeername())
-                # self.set_leader(peer.getpeername())
 
     def check_timeouts(self):
         if self.is_expired():
-            self.declare_victory('TIME OUT WAITING FOR OK')
+            self.declare_victory('TIMEOUT WAITING FOR OK')
 
-    def get_connection(self, member):
+    @staticmethod
+    def get_connection(member):
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.connect(self.members[member])
+            sock.connect(member)
             sock.setblocking(False)
-        except ConnectionError as e:
-            sock = None
-            print(e)
-        except Exception as e:
-            sock = None
-            print(e)
-        finally:
             return sock
+        except Exception as e:
+            print(e)
+            return None
 
     def is_election_in_progress(self):
         return self.get_state() in (State.WAITING_FOR_VICTOR, State.WAITING_FOR_OK)
@@ -159,11 +164,14 @@ class Peer:
             peer = self
         state, timestamp = self.get_state(peer, True)
         if state == State.WAITING_FOR_OK:
-            print((datetime.now() - timestamp).total_seconds())
-            return (datetime.now() - timestamp).total_seconds() > threshold
+            duration = (datetime.now() - timestamp).total_seconds()
+            print('wait for ok ....')
+            return duration > threshold
         return False
 
     def set_leader(self, new_leader):
+        print("== NEW LEADER == ")
+        print("SELF {}".format(self.pid) if new_leader is self.pid else "OTHER {}".format(new_leader))
         self.bully = new_leader
 
     def get_state(self, peer=None, detail=False):
@@ -196,7 +204,8 @@ class Peer:
         if peer is None:
             peer = self
         self.selector.unregister(peer)
-        self.states.pop(peer)
+        if peer in self.states:
+            self.states.pop(peer)
         peer.close()
 
     def start_election(self, reason):
@@ -205,31 +214,37 @@ class Peer:
 
         for pid in self.members:
             if self.pid[0] < pid[0] or self.pid[0] == pid[0] and self.pid[1] < pid[1]:
-                sock = self.get_connection(pid)
+                sock = self.get_connection(self.members[pid])
                 if sock is None:
                     continue
                 self.set_state(State.SEND_ELECTION, sock)
                 self.selector.register(sock, selectors.EVENT_WRITE)
 
-        self.set_state(State.WAITING_FOR_OK)
+        self.set_state(State.WAITING_FOR_OK)  # Use timeouts for bully as well
 
     def declare_victory(self, reason):
         print('=== DECLARE VICTORY ===')
         print('REASON: ', reason)
-        for member in self.members:
-            if member == self.pid:
+        members = self.members
+        self.members = {self.pid, self.listener_address}
+
+        self.set_state(State.WAITING_FOR_ANY_MESSAGE)
+
+        for pid in members:
+            if pid == self.pid:
                 continue
-            sock = self.get_connection(member)
+            sock = self.get_connection(members[pid])
             if sock is None:
                 continue
             self.set_state(State.SEND_VICTORY, sock)
             self.selector.register(sock, selectors.EVENT_WRITE)
-        self.set_leader(self)
+        self.set_leader(self.pid)
+        self.members = members
 
     def update_members(self, their_idea_of_membership):
         self.members = {**self.members, **their_idea_of_membership}
-        for m in self.members:
-            print(m, self.members[m])
+        # for m in self.members:
+        #     print(m, self.members[m])
 
     @staticmethod
     def start_a_server():
