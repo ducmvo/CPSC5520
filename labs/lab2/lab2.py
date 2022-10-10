@@ -84,12 +84,8 @@ class Peer:
         print('{}: OUTGOING {} [{}]'.format(self.pr_sock(self, peer), state.value, self.pr_now()))
         try:
             self.send(self, peer, state.value, self.members)
-        except ConnectionError as e:
-            # print(e)
-            pass
         except Exception as e:
-            # print(e)
-            pass
+            print(e)
         else:
             if state == State.SEND_ELECTION:
                 self.set_state(State.WAITING_FOR_OK, peer, True)
@@ -110,8 +106,6 @@ class Peer:
         print('{}: INCOMING {} [{}]'.format(self.pr_sock(self, peer), state.value, self.pr_now()))
         try:
             data = self.receive(peer)
-        except ConnectionError as e:
-            print(e)
         except Exception as e:
             print(e)
         else:
@@ -153,7 +147,7 @@ class Peer:
             sock.setblocking(False)
             return sock
         except Exception as e:
-            print(e)
+            print(member, 'INACTIVE')
             return None
 
     def is_election_in_progress(self):
@@ -165,7 +159,7 @@ class Peer:
         state, timestamp = self.get_state(peer, True)
         if state == State.WAITING_FOR_OK:
             duration = (datetime.now() - timestamp).total_seconds()
-            print('wait for ok ....')
+            print(int(duration))
             return duration > threshold
         return False
 
@@ -225,12 +219,16 @@ class Peer:
     def declare_victory(self, reason):
         print('=== DECLARE VICTORY ===')
         print('REASON: ', reason)
-        members = self.members
-        self.members = {self.pid, self.listener_address}
+        members = {}
+
+        for pid in self.members:
+            if pid[0] < self.pid[0] or pid[0] == self.pid[0] and pid[1] <= self.pid[1]:
+                members[pid] = self.members[pid]
+        self.members = members
 
         self.set_state(State.WAITING_FOR_ANY_MESSAGE)
 
-        for pid in members:
+        for pid in self.members:
             if pid == self.pid:
                 continue
             sock = self.get_connection(members[pid])
@@ -239,7 +237,6 @@ class Peer:
             self.set_state(State.SEND_VICTORY, sock)
             self.selector.register(sock, selectors.EVENT_WRITE)
         self.set_leader(self.pid)
-        self.members = members
 
     def update_members(self, their_idea_of_membership):
         self.members = {**self.members, **their_idea_of_membership}
