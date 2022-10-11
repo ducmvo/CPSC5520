@@ -10,7 +10,7 @@ BUF_SZ = 1024
 PEER_DIGITS = 100
 CHECK_INTERVAL = 0.001
 ASSUME_FAILURE_TIMEOUT = 2
-PROBING_DURATION_TIMEOUT = (500, 3000)
+PROBING_DURATION = (500, 3000)
 ACTIVE_DURATION = (0, 10000)  # active state
 INACTIVE_DURATION = (1000, 4000)  # inactive state
 
@@ -45,6 +45,10 @@ class Color(Enum):
     def cyan(text):
         return f'{Color.CYAN.value}{text}{Color.END.value}'
 
+    @staticmethod
+    def blue(text):
+        return f'{Color.BLUE.value}{text}{Color.END.value}'
+
 
 class Reason(Enum):
     """
@@ -75,17 +79,17 @@ class State(Enum):
     SEND_PROBE = 'PROBE'
 
     # Incoming message is pending
-    WAITING_FOR_OK = 'WAIT_OK'  # When I've sent them an ELECTION message
+    WAITING_FOR_OK = 'WAITING FOR OK'  # When I've sent them an ELECTION message
     WAITING_FOR_VICTOR = 'WHO IS THE WINNER?'  # This one only applies to myself
-    WAITING_FOR_ANY_MESSAGE = 'WAITING'  # When I've done an accept on their connect to my server
-
-    # Internal state
-    INACTIVE = 'WAITING STARTUP'
-    ACTIVE = 'WAITING SHUTDOWN'
+    WAITING_FOR_ANY_MESSAGE = 'WAITING FOR MESSAGE'  # When I've done an accept on their connect to my server
 
     def is_incoming(self):
         """Categorization helper."""
         return self not in (State.SEND_ELECTION, State.SEND_VICTORY, State.SEND_OK)
+        # return self in (State.WAITING_FOR_ANY_MESSAGE, State.WAITING_FOR_OK, State.WAITING_FOR_VICTOR)
+
+    def is_active(self):
+        return self is not State.QUIESCENT
 
 
 class Peer:
@@ -98,9 +102,9 @@ class Peer:
         self.bully = None
         self.selector = selectors.DefaultSelector()
         self.listener, self.listener_address = None, None
-        self.probing_duration = 0.0
-        self.inactive_duration = 0
-        self.active_duration = 0
+        self.probing_duration = self._pick_duration(PROBING_DURATION)
+        self.inactive_duration = self._pick_duration(INACTIVE_DURATION)
+        self.active_duration = self._pick_duration(ACTIVE_DURATION)
 
     def run(self):
         self.start_server(Reason.CREATE_SERVER.value)
@@ -111,60 +115,60 @@ class Peer:
                     self.accept_peer()
                 elif mask & selectors.EVENT_READ:
                     self.receive_message(key.fileobj)
-                elif mask & selectors.EVENT_WRITE:
-                    self.send_message(key.fileobj)
                 else:
-                    self.set_quiescent(key.fileobj)
+                    self.send_message(key.fileobj)
 
             # if run out of time and NOT receive any OK
             self.check_timeouts()
             ENABLE_PROBING and self.start_probing()
             ENABLE_FEIGNING_FAILURE and self.feign_failure()
 
+    def start_server(self, reason):
+        self.listener, self.listener_address = self.start_a_server()
+        # self.selector.register(self.listener, selectors.EVENT_READ)
+        self.set_state(State.WAITING_FOR_ANY_MESSAGE, self.listener)
+        self.join_group()
+        self.start_election(reason)
+
     def feign_failure(self):
-        if self.get_state() == State.ACTIVE and self.is_failure_expired(self.active_duration):
+        state = self.get_state()
+        if (state == State.WAITING_FOR_ANY_MESSAGE or state == State.WAITING_FOR_OK) \
+                and self.is_failure_expired(self.active_duration):
             self.inactive_duration = self._pick_duration(INACTIVE_DURATION)
+            print(f'> {Color.red("INACTIVE")} [{int(self.inactive_duration * 1000)}ms]')
             self.set_quiescent(self.listener)
             self.set_state(State.QUIESCENT)
 
         if self.get_state() == State.QUIESCENT and self.is_failure_expired(self.inactive_duration):
             self.active_duration = self._pick_duration(ACTIVE_DURATION)
+            print(f'> {Color.cyan("ACTIVE")} [{int(self.active_duration * 1000)}ms]')
             self.start_server(Reason.RESTART_SERVER.value)
-
-    def start_server(self, reason):
-        self.listener, self.listener_address = self.start_a_server()
-        self.join_group()
-        self.start_election(reason)
-        self.set_state(State.ACTIVE)
-        self.selector.register(self.listener, selectors.EVENT_READ)
 
     def is_failure_expired(self, threshold):
         state, timestamp = self.get_state(self, True)
         duration = (datetime.now() - timestamp).total_seconds()
         expired = duration > threshold
-        if expired:
-            if state == State.ACTIVE:  # NOW SHUTDOWN
-                print(f'> {Color.red("SHUTDOWN")} [{int(duration * 1000)}ms]')
-            elif state == State.QUIESCENT:  # NOW STARTUP
-                print(f'> {Color.cyan("STARTUP")} [{int(duration * 1000)}ms]')
+        print(f'> {self.get_state().value} [{int(duration)}s]\r\033[F')
         return expired
 
     def start_probing(self):
+        # if known leader is not self
         if self.bully and self.bully != self.pid and self.is_probing_expired(self.probing_duration):
-            self.set_state(State.WAITING_FOR_OK, self.bully)
             sock = self.get_connection(self.bully)
+            # self.set_state(State.WAITING_FOR_OK, self.bully)
             if sock:
                 self.set_state(State.SEND_PROBE, sock)
-                self.selector.register(sock, selectors.EVENT_WRITE)
+                # self.selector.register(sock, selectors.EVENT_WRITE)
             else:
                 self.start_election(Reason.INACTIVE_LEADER.value)
+            self.probing_duration = self._pick_duration(PROBING_DURATION)
 
     def is_probing_expired(self, threshold):
         expired = False
-        state, timestamp = self.get_state(self.bully, True)
-        if state == State.SEND_PROBE:
-            duration = (datetime.now() - timestamp).total_seconds()
-            expired = duration > threshold
+        state, timestamp = self.get_state(detail=True)
+        # if state == State.SEND_PROBE:
+        duration = (datetime.now() - timestamp).total_seconds()
+        expired = duration > threshold
         if expired:
             print(f'> PROBING TIMEOUT [{int(duration * 1000)}ms]')
         return expired
@@ -181,6 +185,7 @@ class Peer:
                 self.set_state(State.WAITING_FOR_OK, peer, True)
 
             if state == State.SEND_OK:
+                print("SWITCHED FROM RECEIVED ELECTION", id(peer))
                 self.set_quiescent(peer)
 
             if state == State.SEND_VICTORY:
@@ -190,7 +195,10 @@ class Peer:
             if state == State.SEND_PROBE:
                 self.set_state(State.WAITING_FOR_OK, peer, True)
 
+
     def receive_message(self, peer):
+        state = self.get_state(peer)
+        print(f'{self.pr_sock(self, peer)}: STATE | {Color.green(state.value)} [{self.pr_now()}]')
         try:
             data = self.receive(peer)
         except Exception as e:
@@ -200,10 +208,20 @@ class Peer:
             print(f'{self.pr_sock(self, peer)}: RECV ← {Color.green(message)} [{self.pr_now()}]')
 
             if message == State.SEND_OK.value:  # received OK
-                self.set_quiescent(peer)
-                if self.bully and self.pid != self.bully:
-                    self.probing_duration = self._pick_duration(PROBING_DURATION_TIMEOUT)
-                    self.set_state(State.SEND_PROBE, self.bully)
+                # self.set_state(State.WAITING_FOR_ANY_MESSAGE)
+                # self.set_quiescent(peer)
+
+                # cur_state = self.get_state()
+                # if cur_state == State.WAITING_FOR_ANY_MESSAGE:
+                #     # self.set_state(State.SEND_PROBE)
+                #     pass
+                # if cur_state == State.WAITING_FOR_VICTOR:
+                #     pass
+                # if cur_state == State.WAITING_FOR_OK:  # from election
+                #     self.set_state(State.WAITING_FOR_VICTOR)
+                # # if self.bully and self.pid != self.bully:
+                # #     self.probing_duration = self._pick_duration(PROBING_DURATION)
+                # #     self.set_state(State.SEND_PROBE, self.bully)
 
                 if not self.bully:
                     self.set_state(State.WAITING_FOR_VICTOR)
@@ -217,10 +235,10 @@ class Peer:
                 4. If you aren't in an election, then proceed as though you are initiating a new election.
                 """
                 self.update_members(members)
-                if not self.is_election_in_progress():
-                    self.bully = None
-                    self.start_election(Reason.NO_ELECTION.value)
                 self.set_state(State.SEND_OK, peer, True)  # switch to write
+                if not self.is_election_in_progress():
+                    self.set_leader(None)
+                    self.start_election(Reason.NO_ELECTION.value)
 
             if message == State.SEND_VICTORY.value:  # received COORDINATOR
                 bully = (0, 0)
@@ -235,11 +253,15 @@ class Peer:
             if message == State.SEND_PROBE.value:
                 self.set_state(State.SEND_OK, peer, True)
 
+        if state == State.WAITING_FOR_OK:
+            self.set_state(State.WAITING_FOR_ANY_MESSAGE)
+            self.set_quiescent(peer)
+
     def accept_peer(self):
         """Generate a connection for incoming request"""
         peer, peer_address = self.listener.accept()
         peer.setblocking(False)
-        self.selector.register(peer, selectors.EVENT_READ)
+        self.set_state(State.WAITING_FOR_ANY_MESSAGE, peer)
 
     def join_group(self):
         print('> JOIN GROUP')
@@ -268,14 +290,14 @@ class Peer:
             return None
 
     def is_election_in_progress(self):
-        return self.get_state() in (State.WAITING_FOR_VICTOR, State.WAITING_FOR_OK)
+        return self.get_state() == State.WAITING_FOR_VICTOR
 
     def is_expired(self, peer=None, threshold=ASSUME_FAILURE_TIMEOUT):
         expired = False
         if peer is None:
             peer = self
         state, timestamp = self.get_state(peer, True)
-        if state == State.WAITING_FOR_OK:
+        if state == State.WAITING_FOR_VICTOR:
             duration = (datetime.now() - timestamp).total_seconds()
             expired = duration > threshold
         if expired:
@@ -283,9 +305,16 @@ class Peer:
         return expired
 
     def set_leader(self, new_leader):
-        print("> LEADER IS", "SELF {}".format(self.pid) if new_leader is self.pid else "OTHER {}".format(new_leader))
         self.bully = new_leader
-        self.set_state(State.SEND_PROBE, new_leader)
+        if self.bully:
+            self.set_state(State.WAITING_FOR_ANY_MESSAGE)
+
+        if self.bully:
+            print(Color.blue(f"LEADER IS {self.pr_leader()}"))
+        # if self.pid != self.bully:
+        #     self.set_state(State.WAITING_FOR_ANY_MESSAGE)
+        # self.set_state(State.SEND_PROBE)
+        # self.set_state(State.SEND_PROBE, new_leader)
 
     def get_state(self, peer=None, detail=False):
         """
@@ -306,9 +335,17 @@ class Peer:
         if peer is None:
             peer = self
         self.states[peer] = (state, datetime.now())
+
+        # Stop if set state to self
+        if peer is self:
+            return
+
+        # Register/Modify with selector after set state
         if switch_mode:
             event = self.selector.get_key(peer).events
             self.selector.modify(peer, (1 << 0) if event == (1 << 1) else (1 << 1))
+        else:
+            self.selector.register(peer, selectors.EVENT_READ if state.is_incoming() else selectors.EVENT_WRITE)
 
     def set_quiescent(self, peer=None):
         if peer is None:
@@ -327,9 +364,8 @@ class Peer:
                 if sock is None:
                     continue
                 self.set_state(State.SEND_ELECTION, sock)
-                self.selector.register(sock, selectors.EVENT_WRITE)
 
-        self.set_state(State.WAITING_FOR_OK)  # Use timeouts for bully as well
+        self.set_state(State.WAITING_FOR_VICTOR)  # Use timeouts for bully as well
 
     def declare_victory(self, reason):
         print('> DECLARE VICTORY ({})'.format(reason))
@@ -347,7 +383,6 @@ class Peer:
             if sock is None:
                 continue
             self.set_state(State.SEND_VICTORY, sock)
-            self.selector.register(sock, selectors.EVENT_WRITE)
         self.set_leader(self.pid)
 
     def update_members(self, their_idea_of_membership):
