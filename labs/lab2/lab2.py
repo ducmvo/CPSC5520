@@ -9,13 +9,13 @@ import random
 BUF_SZ = 1024
 PEER_DIGITS = 100
 CHECK_INTERVAL = 0.001
-ASSUME_FAILURE_TIMEOUT = 2
-PROBING_DURATION = (500, 8000)
+ASSUME_FAILURE_TIMEOUT = 1
+PROBING_DURATION = (500, 3000)
 ACTIVE_DURATION = (0, 10000)  # active state
 INACTIVE_DURATION = (1000, 4000)  # inactive state
 
 ENABLE_PROBING = True
-ENABLE_FEIGNING_FAILURE = False
+ENABLE_FEIGNING_FAILURE = True
 
 
 class Color(Enum):
@@ -132,29 +132,22 @@ class Peer:
     def feign_failure(self):
         state = self.get_state()
         if (state == State.WAITING_FOR_ANY_MESSAGE or state == State.WAITING_FOR_OK) \
-                and self.is_failure_expired(self.active_duration):
+                and self.is_expired(threshold=self.active_duration):
             self.inactive_duration = self._pick_duration(INACTIVE_DURATION)
             print(f'> {Color.red("INACTIVE")} [{int(self.inactive_duration * 1000)}ms]')
             self.set_quiescent(self.listener)
             self.set_state(State.QUIESCENT)
 
-        if self.get_state() == State.QUIESCENT and self.is_failure_expired(self.inactive_duration):
+        if self.get_state() == State.QUIESCENT and self.is_expired(threshold=self.inactive_duration):
             self.active_duration = self._pick_duration(ACTIVE_DURATION)
             print(f'> {Color.cyan("ACTIVE")} [{int(self.active_duration * 1000)}ms]')
             self.start_server(Reason.RESTART_SERVER.value)
-
-    def is_failure_expired(self, threshold):
-        state, timestamp = self.get_state(self, True)
-        duration = (datetime.now() - timestamp).total_seconds()
-        expired = duration > threshold
-        print(f'> {self.get_state().value} [{int(duration)}s]\r\033[F')
-        return expired
 
     def start_probing(self):
         # Only PROBE if self is not leader
         if self.bully and self.bully != self.pid \
                 and self.get_state() == State.WAITING_FOR_ANY_MESSAGE \
-                and self.is_probing_expired(self.probing_duration):
+                and self.is_expired(threshold=self.probing_duration):
             sock = self.get_connection(self.bully)
             if sock:
                 self.set_state(State.SEND_PROBE, sock)
@@ -164,14 +157,6 @@ class Peer:
             self.set_state(State.WAITING_FOR_ANY_MESSAGE)
             self.probing_duration = self._pick_duration(PROBING_DURATION)
             print(f'> {"NEXT PROBE IN"} [{int(self.probing_duration*1000)}ms]')
-
-    def is_probing_expired(self, threshold):
-        # expired = False
-        state, timestamp = self.get_state(detail=True)
-        # if state == State.WAITING_FOR_ANY_MESSAGE:
-        duration = (datetime.now() - timestamp).total_seconds()
-        expired = duration > threshold
-        return expired
 
     def send_message(self, peer):
         state = self.get_state(peer)
@@ -197,13 +182,14 @@ class Peer:
     def receive_message(self, peer):
         state = self.get_state(peer)
         # print(f'{self.pr_sock(self, peer)}: STATE | {Color.green(state.value)} [{self.pr_now()}]')
+        switching = False
         try:
             data = self.receive(peer)
         except Exception as e:
             print(e)
         else:
+
             message, members = data
-            switching = False
             print(f'{self.pr_sock(self, peer)}: RECV ← {Color.green(message)} [{self.pr_now()}]')
 
             # if message == State.SEND_OK.value:  # received OK
@@ -253,8 +239,8 @@ class Peer:
                 if self.get_state() != State.WAITING_FOR_ANY_MESSAGE:
                     self.set_state(State.WAITING_FOR_ANY_MESSAGE)  # stop wait ok timeout
 
-            if not switching:
-                self.set_quiescent(peer)
+        if not switching:
+            self.set_quiescent(peer)
 
     def accept_peer(self):
         """Generate a connection for incoming request"""
@@ -271,7 +257,7 @@ class Peer:
             self.update_members(data)
 
     def check_timeouts(self):
-        if self.is_expired():
+        if self.get_state() == State.WAITING_FOR_VICTOR and self.is_expired():
             self.declare_victory(Reason.OK_TIMEOUT.value)
 
     def get_connection(self, member):
@@ -292,15 +278,11 @@ class Peer:
         return self.get_state() == State.WAITING_FOR_VICTOR
 
     def is_expired(self, peer=None, threshold=ASSUME_FAILURE_TIMEOUT):
-        expired = False
         if peer is None:
             peer = self
         state, timestamp = self.get_state(peer, True)
-        if state == State.WAITING_FOR_VICTOR:
-            duration = (datetime.now() - timestamp).total_seconds()
-            expired = duration > threshold
-        if expired:
-            print(f'> OK TIMEOUT [{int(duration * 1000)}ms]')
+        duration = (datetime.now() - timestamp).total_seconds()
+        expired = duration > threshold
         return expired
 
     def set_leader(self, new_leader):
@@ -419,7 +401,7 @@ class Peer:
     @staticmethod
     def pr_sock(self, sock):
         if sock is None or sock == self or sock == self.listener:
-            return 'self'
+            return 'SELF'
         return self.cpr_sock(sock)
 
     @staticmethod
@@ -433,9 +415,9 @@ class Peer:
 
     def pr_leader(self):
         if self.bully is None:
-            return 'unknown'
+            return 'UNKNOWN'
         if self.bully == self.pid:
-            return 'self'
+            return 'SELF'
         return self.bully
 
 
