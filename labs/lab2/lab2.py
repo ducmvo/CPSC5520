@@ -548,7 +548,7 @@ if __name__ == '__main__':
 
     gcd_host, gcd_port, next_bd, student_id = sys.argv[1:]
     gcd_addr = (gcd_host, gcd_port)
-    next_bd = datetime.fromisoformat(next_bd)
+    next_bd = datetime.strptime(next_bd, '%Y-%m-%d')
 
     peer_server = Peer(gcd_addr, next_bd, student_id)
     peer_server.run()
