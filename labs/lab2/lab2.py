@@ -211,13 +211,6 @@ class Peer:
             message, members = data
             print(f'{self.pr_sock(self, peer)}: RECV ← {Color.green(message)} [{self.pr_now()}]')
             if message == State.SEND_ELECTION.value:  # received ELECTION
-                """
-                When you receive an ELECTION message,
-                1. you update your membership list with any members you didn't already know about,
-                2. then you respond with the text OK.
-                3. If you are currently in an election, that's all you do.
-                4. If you aren't in an election, then proceed as though you are initiating a new election.
-                """
                 self.update_members(members)
                 self.set_state(State.SEND_OK, peer, True)  # switch to write
                 if not self.is_election_in_progress():
