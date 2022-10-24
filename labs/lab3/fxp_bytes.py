@@ -23,6 +23,7 @@ def serialize_price(x: float) -> bytes:
     :return: bytes suitable to to be sent in a Forex Provider message
     """
     a = array('d', [x])  # array of 8-byte floating-point numbers
+    print(a.tobytes())
     return a.tobytes()
 
 
@@ -93,3 +94,7 @@ def marshal_message(quote_sequence) -> bytes:
         message += serialize_price(quote['price'])
         message += padding
     return message
+
+
+if __name__ == '__main__':
+    serialize_price(9006104071832581.0)

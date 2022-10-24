@@ -12,7 +12,7 @@ import random
 import fxp_bytes
 
 
-REQUEST_ADDRESS = ('localhost', 50403)
+REQUEST_ADDRESS = ('localhost', 50405)
 REQUEST_SIZE = 12
 REVERSE_QUOTED = {'GBP', 'EUR', 'AUD'}
 SUBSCRIPTION_TIME = 19  # 10 * 60  # seconds
@@ -36,7 +36,7 @@ class TestPublisher(object):
     @staticmethod
     # ensure market names always in correct order, alpha sort e.g. CAD/EUR
     def format_market_order(curr_a, curr_b):
-        if curr_a > curr_b:
+        if (curr_a > curr_b):
             curr_first = curr_b
             curr_second = curr_a
         else:
@@ -74,7 +74,7 @@ class TestPublisher(object):
             for quote in quotes:
                 quote['timestamp'] = ts
 
-        # perhaps take out some reference crosses and mix them up
+        # perhaps take out some of the reference crosses and mix them up
         quotes = random.sample(quotes, k=len(quotes) - random.choice((0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 2, 3)))
 
         # occasionally put in an arbitrage
