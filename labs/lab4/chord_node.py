@@ -22,54 +22,66 @@ BUF_SZ = 4096  # socket recv arg
 BACKLOG = 100  # socket listen arg
 TEST_BASE = 43544  # for testing use port numbers on localhost at TEST_BASE+n
 
-@total_ordering
-class Node:
+@total_ordering 
+class BaseNode:
     def __init__(self, address=None):
         self.address = address
-        self.id = self.get_id(address)
-        self.finger = None
-        self.predecessor = None
-        self.keys = None
-                   
+        self.id = self.hash(*address)
+    
     def __repr__(self):
         """Return a string representation of this node"""
         return '{}'.format(self.id)
     
     def __getstate__(self):
         """Return the state of this node to be pickled"""
-        # TODO: include predecessor and finger table
-                # 'finger': self.finger
-                # 'keys': self.keys
         return {'id': self.id, 'address': self.address }
     
     def __eq__(self, other):
         """Return True if this node is equal to other"""
-        if isinstance(other, Node):
+        if isinstance(other, BaseNode):
             return self.id == other.id
         return self.id == other
 
     def __lt__(self, other):
         """Return True if this node is less than other"""
-        if isinstance(other, Node):
+        if isinstance(other, BaseNode):
             return self.id < other.id
-        return self.id < other
-    
+        return self.id < other   
+
     @staticmethod
-    def get_id(address) -> int:
-        """ Return the SHA-1 hash of the node's address """
-        if not address:
-            return None
-        host, port = address
-        hash = sha1()
-        hash.update(host.encode())
-        hash.update(port.to_bytes(2, 'big'))
-        return int.from_bytes(hash.digest(), 'big') % NODES
+    def hash(*data: str | int) -> int:
+        _hash = sha1()
+        for item in data:
+            if isinstance(item, int):
+                _hash.update(item.to_bytes(2, 'big'))
+            elif isinstance(item, str):
+                _hash.update(item.encode())
+            else:
+                raise TypeError('data must be int or str')
+        return int.from_bytes(_hash.digest(), 'big') % NODES
+
+class NodeServer:
+    def __init__(self) -> None:
+        self.server = None
     
-class ChordNode(Node):
-    def __init__(self, num=0):
-        self.server, self.address = self.start_server(num)
-        self.id = self.get_id(self.address)
-        self.finger = [None] + [FingerEntry(self.id, k) for k in range(1, M+1)]  # indexing starts at 1
+    def start_server(self, num=None):
+        """Create a listening server that accept TCP/IP request
+        :return: server socket and its address in a tuple
+        """
+        num = TEST_BASE + num if num else 0
+        address = ('localhost', num)
+        self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server.bind(address)
+        self.server.listen()
+        print(f'> CHORD SERVER LISTENING ON {self.server.getsockname()}\n')
+        return self.server.getsockname()
+    
+class ChordNode(BaseNode, NodeServer):
+    def __init__(self, num=None):
+        """Initialize a new node"""
+        self.address = self.start_server(num)
+        self.id = self.hash(*self.address)
+        self.finger = [None] + [FingerEntry(self.id, k) for k in range(1, M+1)]
         self.predecessor = None
         self.keys = {}
     
@@ -78,25 +90,25 @@ class ChordNode(Node):
         return self.finger[1].node
 
     @successor.setter
-    def successor(self, n: Node):
+    def successor(self, n: BaseNode):
         self.finger[1].node = n
     
     def join(self, port: int):
-        print('SELF', self)
+        print('SELF ID', self)
         if port:
             address = ('127.0.0.1', port)
-            np = Node(address)
+            np = BaseNode(address)
             self.init_finger_table(np)
-            print('JOINED', self.pr_finger())
+            print('NETWORK JOINED', self.pr_finger())
             self.update_others()
             print('FINISH UPDATE OTHER', self.pr_finger())
         else:
             for i in range(1, M+1):
                 self.finger[i].node = self
             self.predecessor = self
-            print('CREATED', self.pr_finger())
+            print('NETWORK CREATED', self.pr_finger())
 
-    def init_finger_table(self, np: Node):
+    def init_finger_table(self, np: BaseNode):
         """Initialize this node's finger table"""
         self.successor = self.call_rpc(np, 'find_successor', self.finger[1].start)
         self.predecessor = self.call_rpc(self.successor, 'get_predecessor')
@@ -141,7 +153,7 @@ class ChordNode(Node):
             # self might become p's i-th finger node (successor)
             self.call_rpc(p, 'update_finger_table', self, i)
 
-    def update_finger_table(self, s: Node, i: int):
+    def update_finger_table(self, s: BaseNode, i: int):
         """ if s is i-th finger of n, update this node's finger table with s """        
         if (self.finger[i].start != self.finger[i].node
                  and s.id in ModRange(self.finger[i].start, self.finger[i].node.id, NODES)):
@@ -155,7 +167,7 @@ class ChordNode(Node):
             
             print('UPDATED FINGER TABLE', self.pr_finger())
             
-    def call_rpc(self, np: Node, method: str, arg1=None, arg2=None):
+    def call_rpc(self, np: BaseNode, method: str, arg1=None, arg2=None):
         """Call a remote procedure on node n"""
         print('C-RPC: {} SEND {} : {}, {}, {}'.format(self.id, np.id, method, arg1, arg2))
         
@@ -209,28 +221,16 @@ class ChordNode(Node):
     
     def pr_finger(self):
         """ Print the finger table """
-        text = '\n===============================\n'
-        text += 'finger table\nstart\t| int.\t| succ.\n'
+        text = '\n========================\n'
+        text += 'FINGER TABLE\n'
+        text += 'start\t| int.\t| succ.\n'
         for i in range(1, M+1):
             text += '{}\t| [{},{})\t| {}\n'.format(self.finger[i].start, 
                     self.finger[i].start, self.finger[i].next_start, self.finger[i].node)
-        text += '===============================\n'
         text += 'PREDECESSOR: {}\n'.format(self.predecessor)
         text += 'SUCCESSOR: {}\n'.format(self.successor)
-        return text
-    
-    @staticmethod
-    def start_server(num=None):
-        """Create a listening server that accept TCP/IP request
-        :return: server socket and its address in a tuple
-        """
-        num = TEST_BASE + num if num else 0
-        address = ('localhost', num)
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.bind(address)
-        sock.listen()
-        print(f'> CHORD SERVER LISTENING ON {sock.getsockname()}\n')
-        return sock, sock.getsockname()
+        text += '========================\n'
+        return text    
     
     @staticmethod
     def send(conn, message=None, buffer_size=BUF_SZ):
@@ -245,7 +245,7 @@ class ChordNode(Node):
         """
         data = conn.recv(buffer_size)
         return pickle.loads(data)
-             
+    
 
 if __name__ == '__main__':
     if len(sys.argv) not in range(1, 4):
@@ -266,9 +266,19 @@ if __name__ == '__main__':
     if len(sys.argv) == 3:
         num = int(sys.argv[2])
           
-    node = ChordNode(num) # start a server
+    node = ChordNode(num) # create a new node server
     node.join(port)  # join the network
     node.serve()
+    
+    # TEST CASE
+    # node 0 -> num 1
+    # node 1 -> num 2
+    # node 2 -> num 6
+    # node 3 -> num 21
+    # node 4 -> num 4
+    # node 5 -> num 12
+    # node 6 -> num 16
+    # node 7 -> num 9
     
       
     
