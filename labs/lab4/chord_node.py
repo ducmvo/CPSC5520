@@ -33,8 +33,6 @@ class Method(Enum):
     CLOSEST_PRECEDING_FINGER = 'CLOSEST_PRECEDING_FINGER'
     UPDATE_FINGER_TABLE = 'UPDATE_FINGER_TABLE'
     
-   
-    
 @total_ordering 
 class BaseNode:
     def __init__(self, address=None):
@@ -86,7 +84,7 @@ class NodeServer:
         self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server.bind(address)
         self.server.listen()
-        print(f'> CHORD SERVER LISTENING ON {self.server.getsockname()}\n')
+        print(f'> NODE SERVER :{self.server.getsockname()[1]}')
         return self.server.getsockname()
     
 class ChordNode(BaseNode, NodeServer):
@@ -97,6 +95,7 @@ class ChordNode(BaseNode, NodeServer):
         self.finger = [None] + [FingerEntry(self.id, k) for k in range(1, M+1)]
         self.predecessor = None
         self.keys = {}
+        print('> NODE ID', self)
     
     @property
     def successor(self):
@@ -110,10 +109,10 @@ class ChordNode(BaseNode, NodeServer):
         if port:
             address = ('127.0.0.1', port)
             np = BaseNode(address)
+            print('> JOINING VIA {}'.format(np))
             self.init_finger_table(np)
-            print('> NETWORK JOINED', self.pr_finger())
             self.update_others()
-            print('> UPDATE OTHERS FINISHED', self.pr_finger())
+            print('> NETWORK JOINED', self.pr_finger())
         else:
             for i in range(1, M+1):
                 self.finger[i].node = self
@@ -287,7 +286,7 @@ if __name__ == '__main__':
     node.join(port)  # join the network
     node.serve()
     
-    # TEST CASE
+    # TEST CASE FOR 3-BIT ADDRESS SPACE
     # node 0 -> num 1
     # node 1 -> num 2
     # node 2 -> num 6
