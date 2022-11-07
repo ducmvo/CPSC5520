@@ -152,7 +152,25 @@ class ChordNode(BaseNode, NodeServer):
         # find the node responsible for the key to insert
         s = self.find_successor(key)
         return self.call_rpc(s, Method.INSERT, data) 
+    
+    def query(self, key=None):
+        """Query data from network using this node as the starting point"""
+        if not key:
+            return {'status': 'ERROR', 'message': 'NO KEY PROVIDED'}
         
+        # handle case where this is the only node in the network
+        # or key in the range (predecessor , self]
+        mr = ModRange(self.predecessor.id + 1, self.id + 1, NODES)
+        if self == self.predecessor or key in mr:
+            if key in self.keys:
+                print('> QUERY KEY: {}, VALUE: {}'.format(key, self.keys[key]))
+                return {'status': 'OK', 'message': {'key': key, 'value': self.keys[key]}}
+            return {'status': 'OK', 'message': 'KEY NOT FOUND' }
+        
+        # find the node responsible for the key to query
+        s = self.find_successor(key)
+        return self.call_rpc(s, Method.QUERY, key)
+    
     def join(self, port: int):
         if port:
             address = ('127.0.0.1', port)
@@ -278,8 +296,10 @@ class ChordNode(BaseNode, NodeServer):
             return self.populate(arg1)
         elif method.value == Method.INSERT.value:
             return self.insert(arg1)
+        elif method.value == Method.QUERY.value:
+            return self.query(arg1)
         else:
-            raise ValueError('Unknown method'.format(method))
+            return { 'status': 'ERROR', 'message': 'Unknown method {}'.format(method)}
             
     def handle_rpc(self, client):
         """Handle a single RPC request"""
