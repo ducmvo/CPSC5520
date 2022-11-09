@@ -2,49 +2,43 @@
 chord_populate takes a port number of an existing node and the filename 
 of the data file
 """
+import sys
 import csv
 from enum import Enum
 from hashlib import sha1
 import socket
-# from chord_node import Method
 from chord_finger import NODES
 import pickle
 
-# from chord_finger import M, NODES
-# M = 3 # sha1().digest_size * 8  # number of bits in the identifier space
-# NODES = 2**M  # address space is 2^M = 8 nodes
 BUF_SZ = 4096
+ENABLE_CLI = True
+ENABLE_INSERT = True
 
 class Method(Enum):
+    QUERY = 'QUERY'
     POPULATE = 'POPULATE'
     INSERT = 'INSERT'
         
     def is_data_signal(self):
         return self in (Method.POPULATE, Method.INSERT)
-   
-
-class ChordPopulate:
-    def __init__(self, port, filename):
-        self.data = self.parse(filename)
-        self.populate(port, self.data)
-    
+class ChordPopulate: 
     def populate(self, port, data=None, method=Method.POPULATE):
         """Populate the chord ring via an existing node"""
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
-            address = ('localhost', port)
+            address = ('localhost', int(port))
             server.connect(address)
-            # signal server to send large data in chunks
-            self.send(server, (method, None, None))
-            res = self.receive(server)
-            # server status (ready)
-            print('> RESPONSE: {}'.format(res))  
-            self.send(server, data)
-            # close write side, wait for read
-            server.shutdown(socket.SHUT_WR)  
-            res = self.receive(server)
-            # server status (done)
-            print('> RESPONSE: {}'.format(res))  
+            self.send(server, (method, None, None)) # signal to populate/insert
+            res = self.receive(server) # receive confirmation
+            self.send(server, data)  # send data in chunks
+            server.shutdown(socket.SHUT_WR)   # close write side, wait for read
+            res = self.receive(server) # receive status
             server.close()
+            return res
+    
+    def insert(self, port, key=None, value=None):
+        if key is None or value is None:
+            return
+        self.populate(port, (self.hash(key), value), Method.INSERT)
         
     def parse(self, filename):
         """Parse data from file"""
@@ -58,6 +52,30 @@ class ChordPopulate:
                 data[key] = row
         data = dict(sorted(data.items()))
         return data
+
+    def run(self):
+        repeat = True
+        while repeat:
+            # user input
+            port = input('Enter port number of an existing node: ')
+            key = input('Enter key to insert: ')
+            value = input('Enter data to insert: ')
+            
+            # validation
+            if not port or not key or not value:
+                print('Invalid input, port, key, and value must be non-empty')
+                continue
+            try:
+                int(port)
+            except ValueError:
+                print('> Error: Invalid input, port must be an integer')
+                continue
+            
+            # insertion
+            self.insert(port, key, value)
+            repeat = input('Continue? (y/n): ')
+            if repeat not in ('y', 'Y', ''):
+                repeat = False
 
     @staticmethod
     def hash(*data: str | int) -> int:
@@ -88,31 +106,19 @@ class ChordPopulate:
 if __name__ == '__main__':
     port = 43555
     filename = 'Career_Stats_Passing.csv'
-    cp = ChordPopulate(port, filename)
-    repeat = True
-    while repeat:
-        port = input('Enter port number of an existing node: ')
-        key = cp.hash(input('Enter key to insert: '))
-        value = input('Enter data to insert: ')
-        if not port or not key or not value:
-            print('Invalid input, port, key, and value must be non-empty')
-            continue
-        cp.populate(int(port), (key,value), method=Method.INSERT)
-        repeat = input('Continue? (y/n): ')
-        if repeat not in ('y', 'Y', ''):
-            repeat = False
-
-def match(cp):
-    s = set()
-    d = {}
-    num = 1
-    while len(s) < NODES:
-        node = cp.hash('127.0.0.1', 43544+num)
-        if node not in s:
-            s.add(node)
-            d[node] = num
-        num += 1
-        
-    d = dict(sorted(d.items()))
-    for k,v in d.items():
-        print('node', k, 'num', v)
+    
+    if ENABLE_CLI and len(sys.argv) != 3:
+        print('Usage: python chord_populate.py <port> <filename>')
+        sys.exit(1)
+    
+    if ENABLE_CLI:
+        port = sys.argv[1]
+        filename = sys.argv[2]
+   
+    cp = ChordPopulate()
+    data = cp.parse(filename)
+    status = cp.populate(port, data)
+    print('> RESPONSE: {}'.format(status))
+    
+    # run user interface
+    ENABLE_INSERT and cp.run()
