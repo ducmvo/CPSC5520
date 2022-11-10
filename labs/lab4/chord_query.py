@@ -5,8 +5,8 @@ chord_query takes a port number of an existing node and a key
 import sys
 import socket
 import pickle
-from hashlib import sha1
-from chord_node import NODES, Method
+from datetime import datetime
+from chord_node import Method, BaseNode as Node
 
 BUF_SZ = 4096
 ENABLE_CLI = True
@@ -24,7 +24,7 @@ class ChordQuery:
                 print('> Error: Connection refused, node may not be running')
                 sys.exit(1)
                 
-            self.send(server, (method, self.hash(key), None))
+            self.send(server, (method, Node.hash(key), None))
             res = self.receive(server)
 
             # print('> RESPONSE: {}'.format(res))
@@ -70,19 +70,6 @@ class ChordQuery:
             return False
         return True
 
-    
-    @staticmethod
-    def hash(*data: str | int) -> int:
-        _hash = sha1()
-        for item in data:
-            if isinstance(item, int):
-                _hash.update(item.to_bytes(2, 'big'))
-            elif isinstance(item, str):
-                _hash.update(item.encode())
-            else:
-                raise TypeError('data must be int or str')
-        return int.from_bytes(_hash.digest(), 'big') % NODES
-
     @staticmethod
     def send(conn, message=None, buffer_size=BUF_SZ):
         """Serialized and send all data using passed in socket"""
@@ -96,6 +83,11 @@ class ChordQuery:
         """
         data = conn.recv(buffer_size)
         return pickle.loads(data)
+    
+    @staticmethod
+    def pr_now():
+        """Print current time in H:M:S.f format"""
+        return datetime.now().strftime('%H:%M:%S.%f')
     
 if __name__ == '__main__':
     port = 43555
