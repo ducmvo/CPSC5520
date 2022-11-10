@@ -1,28 +1,29 @@
-from chord_node import ChordNode as Node
-from chord_populate import ChordPopulate as Populate
-from chord_query import ChordQuery as Query
-import threading
+import sys
 import time
 import random
+import threading
+from chord_query import ChordQuery as Query
+from chord_node import ChordNode as Node, NODES
+from chord_populate import ChordPopulate as Populate
 
 TEST_BASE = 43544
 FILE_NAME = 'Career_Stats_Passing.csv'
 
-
 class ChordTest:
-    def __init__(self):
-        self.nums = [11, 2, 21, 19]
+    def __init__(self, num_nodes=5):
+
         self.nodes = []
         self.ports = []
         self.threads = []
         
-        for num in self.nums:
-            self.nodes.append(Node(num))
-            self.ports.append(num + TEST_BASE)
+        for _ in range(num_nodes):
+            node = Node(0)
+            self.nodes.append(node)
+            self.ports.append(node.address[1])
         
-        uports = { TEST_BASE + self.nums[0] }
+        uports = { self.ports[0] }
         for i, node in enumerate(self.nodes):
-            p = self.rport(list(uports))
+            p = self.rand_port(list(uports))
             uports.add(p)
             if i == 0: p = 0
             t = threading.Thread(target=self.serve, args=(node, p))
@@ -36,17 +37,23 @@ class ChordTest:
         # Populate the network via random nodes
         cp = Populate()
         data = cp.parse(FILE_NAME)
-        cp.populate(self.rport(), data)
+        cp.populate(self.rand_port(), data)
 
         # Query the network via random nodes
         cq = Query()
-        value = cq.query(self.rport(), 'vodangminhduc')
-        print('\n====================\n', value != 'khakhakhakha', '\n====================\n', )
-        cp.insert(self.rport(), 'vodangminhduc', 'khakhakhakha')
-        value = cq.query(self.rport(), 'vodangminhduc')
-        print('\n====================\n', value == 'khakhakhakha', '\n====================\n')
-    
-    def rport(self, ports=None):
+        value = cq.query(self.rand_port(), 'Foo')
+        print('\n====================\n', 'TEST PASSED: ',
+            value != 'Bar', '\n====================\n', )
+        cp.insert(self.rand_port(), 'Foo', 'Bar')
+        value = cq.query(self.rand_port(), 'Foo')
+        
+        print('\n====================\n', 'TEST PASSED: ', 
+            value == 'Bar', '\n====================\n')
+        
+        print([Node.hash('127.0.0.1', port) for port in self.ports])
+         
+                 
+    def rand_port(self, ports=None):
         if ports is None:
             ports = self.ports
         return random.choice(ports)
@@ -57,6 +64,6 @@ class ChordTest:
         node.serve()
 
 if __name__ == '__main__':
-    ct = ChordTest()
+    ct = ChordTest(10) # 10 random nodes with random ports
     ct.run()
 
