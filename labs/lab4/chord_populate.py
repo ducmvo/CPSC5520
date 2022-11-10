@@ -8,7 +8,7 @@ import socket
 from chord_node import BaseNode as Node, NodeServer as Server, Method
 
 ENABLE_CLI = True  # enable command line arguments for port and filename
-ENABLE_INSERT = True  # user interface for inserting key-value pairs
+ENABLE_INSERT = False  # user interface for inserting key-value pairs
 
 class ChordPopulate: 
     def populate(self, port, data=None, method=Method.POPULATE):

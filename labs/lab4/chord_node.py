@@ -8,7 +8,6 @@ connections (other nodes or queriers).
 You can use blocking TCP for this and pickle for the marshaling.
 """
 import sys
-import time
 import socket
 import pickle
 import threading
@@ -22,6 +21,8 @@ NODES = 2**M  # Test environment 2^3=8 Nodes, normally = 2^160 Nodes
 BUF_SZ = 4096  # socket recv arg
 BACKLOG = 100  # socket listen arg
 TEST_BASE = 43544  # for testing use port numbers on localhost at TEST_BASE+n
+
+ENABLE_JOIN_WITH_DATA = True  # Enable Node join after network has been populated
 
 class Method(Enum):
     FIND_SUCCESSOR = 'FIND_SUCCESSOR'
@@ -265,7 +266,7 @@ class ChordNode(NodeServer):
         mr = ModRange(self.predecessor.id + 1, self.id + 1, NODES)
         if self == self.predecessor or key in mr:
             self.keys[key] = value
-            print('> INSERTED KEY: {}, VALUE: {}'.format(self, key, value))
+            # print('> INSERTED KEY: {}, VALUE: {}'.format(self, key, value))
             return {'status': 'OK', 'message': 'NODE {} KEY {}'.format(self.id, key)}
         
         # find the node responsible for the key to insert
@@ -282,7 +283,7 @@ class ChordNode(NodeServer):
         mr = ModRange(self.predecessor.id + 1, self.id + 1, NODES)
         if self == self.predecessor or key in mr:
             if key in self.keys:
-                print('> QUERY KEY: {}, VALUE: {}'.format(key, self.keys[key]))
+                # print('> QUERY KEY: {}, VALUE: {}'.format(key, self.keys[key]))
                 return {'status': 'OK', 'message': {'key': key, 'value': self.keys[key]}}
             return {'status': 'OK', 'message': 'KEY NOT FOUND' }
         
@@ -308,14 +309,24 @@ class ChordNode(NodeServer):
         """Initialize this node's finger table"""
         self.successor = self.call_rpc(np, Method.FIND_SUCCESSOR, self.finger[1].start)
         self.predecessor = self.call_rpc(self.successor, Method.GET_PREDECESSOR)
-        self.call_rpc(self.successor, Method.SET_PREDECESSOR, self)
+        
+        # this RPC will receive coresponding keys from successor
+        self.keys = self.call_rpc(self.successor, Method.SET_PREDECESSOR, self)
         
         for i in range(1, M):
             if self.finger[i+1].start in ModRange(self.id, self.finger[i].node.id, NODES):
                 self.finger[i+1].node = self.finger[i].node
             else:
                 self.finger[i+1].node = self.call_rpc(np, Method.FIND_SUCCESSOR, self.finger[i+1].start)  
-   
+    
+    def set_predecessor(self, np: BaseNode):
+        self.predecessor = np
+        data = {}
+        if ENABLE_JOIN_WITH_DATA and self != np:
+            mr = ModRange(np.id, self.id + 1, NODES)
+            data = { k: v for k, v in self.keys.items() if k not in  mr}
+        return data
+    
     def find_successor(self, id):
         """ Ask this node to find id's successor = successor(predecessor(id))"""
         np = self.find_predecessor(id)
@@ -345,7 +356,7 @@ class ChordNode(NodeServer):
             # -> key right after the node that ith finger might be this node
             key = (1 + self.id - 2**(i-1) + NODES) % NODES
             p = self.predecessor if key == self else self.find_predecessor(key)
-            print('> NODE TO BE UPDATED {} p({})'.format(p, key))
+            # print('> NODE TO BE UPDATED {} p({})'.format(p, key))
             # self might become p's i-th finger node (successor)
             self.call_rpc(p, Method.UPDATE_FINGER_TABLE, self, i)
 
@@ -362,15 +373,12 @@ class ChordNode(NodeServer):
             
     def call_rpc(self, np: BaseNode, method: Method, arg1=None, arg2=None):
         """Call a remote procedure on node n"""
-        if isinstance(arg1, dict):
-            print('{} C-RPC: {} SEND {} {}, {}'.format(
-                self.pr_now(), self.id, np.id, 
-                method.value, list(arg1.keys())))
-        else:  
-            print('{} C-RPC: {} SEND {} {}, {} {}'.format(
-                self.pr_now(), self.id, np.id, 
-                method.value, arg1 or "", arg2 or ""))
-
+        print('{} C-RPC: {} SEND {} {}, {} {}'.format(
+                self.pr_now(), self.id, np.id, method.value, 
+                isinstance(arg1, dict) and list(arg1.items()) or 
+                isinstance(arg1, tuple) and {arg1[0]:arg1[1][1]} or arg1 or "",
+                isinstance(arg2, dict) and list(arg1.items()) or arg2 or ""))
+        
         if np == self:
             return self.dispatch_rpc(method, arg1, arg2)
             
@@ -385,13 +393,44 @@ class ChordNode(NodeServer):
             else:
                 self.send(server, (method, arg1, arg2))
             
+            # special case for join to receive back filtered keys table from successor
+            is_chunked_data = method == Method.SET_PREDECESSOR
+            
             # close write side, wait for read    
             server.shutdown(socket.SHUT_WR)  
-            data = self.receive(server)
+            data = self.receive(server, chunks=is_chunked_data)
+            
             print('{} C-RPC: {} RECV {} {}, {}'.format(
-                self.pr_now(), self.id, np.id, method.value, data))
+                self.pr_now(), self.id, np.id, method.value, 
+                is_chunked_data and [k for k in data] or data or ""))
+            
             server.close()
             return data  
+          
+    def handle_rpc(self, client):
+        """Handle a single RPC request"""
+        method, arg1, arg2 = self.receive(client)
+        
+        # signal to start receiving data in chunks
+        if method.is_data_signal():
+            self.send(client, {'status': 'OK', 'message': 'READY TO RECEIVE DATA'})
+            arg1 = self.receive(client, chunks=True)
+        
+        print('{} H-RPC: {} RECV {}, {} {}'.format(
+                self.pr_now(), self.id, method.value, 
+                isinstance(arg1, dict) and list(arg1.values()) or 
+                isinstance(arg1, tuple) and {arg1[0]:arg1[1][1]} or arg1 or "", 
+                isinstance(arg2, dict) and list(arg2.values()) or arg2 or ""))
+        
+        data = self.dispatch_rpc(method, arg1, arg2)
+        self.send(client, data)
+        
+        print('{} H-RPC: {} SEND {}, {}'.format(
+            self.pr_now(), self.id, method.value, 
+            method.value == Method.SET_PREDECESSOR.value and [k for k in data] or
+            data or ""))
+        
+        client.close()
     
     def dispatch_rpc(self, method: Method, arg1=None, arg2=None):
         """Dispatch an RPC request to the appropriate method"""
@@ -408,7 +447,7 @@ class ChordNode(NodeServer):
         elif method.value == Method.GET_PREDECESSOR.value:
             return self.predecessor
         elif method.value == Method.SET_PREDECESSOR.value:
-            self.predecessor = arg1
+            return self.set_predecessor(arg1)
         elif method.value == Method.POPULATE.value:
             return self.populate(arg1)
         elif method.value == Method.INSERT.value:
@@ -417,31 +456,7 @@ class ChordNode(NodeServer):
             return self.query(arg1)
         else:
             return { 'status': 'ERROR', 'message': 'Unknown method {}'.format(method)}
-            
-    def handle_rpc(self, client):
-        """Handle a single RPC request"""
-        method, arg1, arg2 = self.receive(client)
-        
-        # signal to start receiving data in chunks
-        if method.is_data_signal():
-            self.send(client, {'status': 'OK', 'message': 'READY TO RECEIVE DATA'})
-            arg1 = self.receive(client, chunks=True)
-        
-        if isinstance(arg1, dict):
-            print('{} H-RPC: {} RECV {}, {}'.format(
-                self.pr_now(), self.id, 
-                method.value,  list(arg1.keys())))
-        else:
-            print('{} H-RPC: {} RECV {}, {} {}'.format(
-                self.pr_now(), self.id, 
-                method.value, arg1 or "", arg2 or ""))
-        
-        result = self.dispatch_rpc(method, arg1, arg2)
-        self.send(client, result)
-        print('{} H-RPC: {} SEND {}, {}'.format(
-            self.pr_now(), self.id, method.value, result or "")) 
-        client.close()
-    
+     
     def serve(self):
         """Listen for ready connections to receive data"""
         while True:
@@ -453,7 +468,7 @@ class ChordNode(NodeServer):
         row = '{:>6} | {:<10} | {:<6}\n'
         header = '{:>6}   {:<10}   {:<6}\n'
         text = '\n========================\n'
-        text += f'FINGER TABLE - SELF ID {self}\n'
+        text += f'FINGER TABLE\n'
         text += header.format('start', 'int.', 'succ.')
         for i in range(1, M+1):
             start = str(self.finger[i].start)
@@ -462,6 +477,7 @@ class ChordNode(NodeServer):
             text += row.format(start, interval, succ)
         text += 'PREDECESSOR: {}\n'.format(self.predecessor)
         text += 'SUCCESSOR: {}\n'.format(self.successor)
+        text += 'SELF {}\nPORT: {}\n'.format(self, self.address[1])
         text += '========================\n'
         return text    
 

@@ -43,7 +43,7 @@ class ChordTest:
         data = cp.parse(FILE_NAME)
         
         # Test populate the network via random nodes
-        cp.populate(self.rand_port(), data)
+        # cp.populate(self.rand_port(), data)
         
         # Test insert each key-value pair to network
         for key, value in data.items():
