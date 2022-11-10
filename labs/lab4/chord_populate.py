@@ -4,29 +4,27 @@ of the data file
 """
 import sys
 import csv
-from enum import Enum
-from hashlib import sha1
 import socket
-from chord_finger import NODES
 import pickle
+from hashlib import sha1
+from chord_node import NODES, Method
 
 BUF_SZ = 4096
 ENABLE_CLI = True
 ENABLE_INSERT = True
 
-class Method(Enum):
-    QUERY = 'QUERY'
-    POPULATE = 'POPULATE'
-    INSERT = 'INSERT'
-        
-    def is_data_signal(self):
-        return self in (Method.POPULATE, Method.INSERT)
 class ChordPopulate: 
     def populate(self, port, data=None, method=Method.POPULATE):
         """Populate the chord ring via an existing node"""
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
             address = ('localhost', int(port))
-            server.connect(address)
+            
+            try:
+                server.connect(address)
+            except ConnectionRefusedError:
+                print('> Error: Connection refused, node may not be running')
+                sys.exit(1)
+                
             self.send(server, (method, None, None)) # signal to populate/insert
             res = self.receive(server) # receive confirmation
             self.send(server, data)  # send data in chunks
@@ -61,14 +59,7 @@ class ChordPopulate:
             key = input('Enter key to insert: ')
             value = input('Enter data to insert: ')
             
-            # validation
-            if not port or not key or not value:
-                print('Invalid input, port, key, and value must be non-empty')
-                continue
-            try:
-                int(port)
-            except ValueError:
-                print('> Error: Invalid input, port must be an integer')
+            if not self.validate(port, key, value):
                 continue
             
             # insertion
@@ -76,6 +67,25 @@ class ChordPopulate:
             repeat = input('Continue? (y/n): ')
             if repeat not in ('y', 'Y', ''):
                 repeat = False
+    
+    @staticmethod         
+    def validate(port, key=None, value=None, port_only=False):
+        if not port:
+            print('Error: Invalid input, port must be non-empty')
+            return False
+        
+        if  not port_only and (not key or not value):
+            print('Error: Invalid input, key, value must be non-empty')
+            return False
+        
+        try:
+            port = int(port)
+            if port > 65535 or port < 0:
+                raise ValueError
+        except ValueError:
+            print('Error: Invalid input, port must be an integer between 0 and 65535')
+            return False
+        return True
 
     @staticmethod
     def hash(*data: str | int) -> int:
@@ -117,6 +127,10 @@ if __name__ == '__main__':
    
     cp = ChordPopulate()
     data = cp.parse(filename)
+    
+    if not cp.validate(port, port_only=True):
+        sys.exit(1)
+        
     status = cp.populate(port, data)
     print('> RESPONSE: {}'.format(status))
     

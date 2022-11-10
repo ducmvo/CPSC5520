@@ -2,36 +2,28 @@
 chord_query takes a port number of an existing node and a key 
 (any value from column 1+4 of the file)
 """
-
-"""
-chord_populate takes a port number of an existing node and the filename 
-of the data file
-"""
 import sys
-from enum import Enum
-from hashlib import sha1
 import socket
-from chord_finger import NODES
 import pickle
+from hashlib import sha1
+from chord_node import NODES, Method
 
 BUF_SZ = 4096
 ENABLE_CLI = True
-ENABLE_QUERY_INPUT = False
-
-class Method(Enum):
-    QUERY = 'QUERY'
-    POPULATE = 'POPULATE'
-    INSERT = 'INSERT'
-        
-    def is_data_signal(self):
-        return self in (Method.POPULATE, Method.INSERT)
+ENABLE_QUERY_INPUT = True
    
 class ChordQuery:
     def query(self, port, key, method=Method.QUERY):
         """Query the chord network via an existing node"""
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
             address = ('localhost', int(port))
-            server.connect(address)
+            
+            try:
+                server.connect(address)
+            except ConnectionRefusedError:
+                print('> Error: Connection refused, node may not be running')
+                sys.exit(1)
+                
             self.send(server, (method, self.hash(key), None))
             res = self.receive(server)
 
@@ -47,14 +39,7 @@ class ChordQuery:
             port = input('> Enter port number of an existing node: ')
             key = input('> Enter key to query: ')
             
-            # validation
-            if not port or not key:
-                print('> Error: Invalid input, port, key, must be non-empty')
-                continue
-            try:
-                int(port)
-            except ValueError:
-                print('> Error: Invalid input, port must be an integer')
+            if not self.validate(port, key):
                 continue
             
             # query
@@ -66,7 +51,26 @@ class ChordQuery:
             if repeat not in ('y', 'Y', ''):
                 repeat = False
             
+    @staticmethod         
+    def validate(port, key=None, port_only=False):
+        if not port:
+            print('Error: Invalid input, port must be non-empty')
+            return False
+        
+        if  not port_only and not key:
+            print('Error: Invalid input, key, value must be non-empty')
+            return False
+        
+        try:
+            port = int(port)
+            if port > 65535 or port < 0:
+                raise ValueError
+        except ValueError:
+            print('Error: Invalid input, port must be an integer between 0 and 65535')
+            return False
+        return True
 
+    
     @staticmethod
     def hash(*data: str | int) -> int:
         _hash = sha1()
@@ -97,14 +101,17 @@ if __name__ == '__main__':
     port = 43555
     key = 'random-key-that-will-be-hashed'
     
-    if ENABLE_CLI and len(sys.argv) != 3:
+    if ENABLE_CLI and len(sys.argv) < 3:
         print('Usage: python chord_query.py <port> <key>')
         sys.exit(1)
     elif ENABLE_CLI:
         port = int(sys.argv[1])
-        key = sys.argv[2]
-    
+        key = ' '.join(sys.argv[2:])
     cq = ChordQuery()
+    
+    if not cq.validate(port, port_only=True):
+        sys.exit(1)
+        
     value = cq.query(port, key)
     print(f'> KEY: {key}')
     print(f'> VALUE: {value} \n')
