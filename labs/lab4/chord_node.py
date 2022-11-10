@@ -7,19 +7,17 @@ The node joins and then listens for incoming
 connections (other nodes or queriers). 
 You can use blocking TCP for this and pickle for the marshaling.
 """
-from datetime import datetime
-from enum import Enum
-from functools import total_ordering
-from hashlib import sha1
 import sys
 import socket
 import pickle
 import threading
+from enum import Enum
+from hashlib import sha1
+from datetime import datetime
+from functools import total_ordering
 
-from chord_finger import FingerEntry, ModRange, NODES, M
-
-# M = 7  # FIXME: Test environment 3-bit, normally = hashlib.sha1().digest_size * 8 = 20 * 8 = 160-bit
-# NODES = 2**M  # Test environment 2^3=8 Nodes, normally = 2^160 Nodes
+M = 7  # FIXME: Test environment 3-bit, normally = hashlib.sha1().digest_size * 8 = 20 * 8 = 160-bit
+NODES = 2**M  # Test environment 2^3=8 Nodes, normally = 2^160 Nodes
 BUF_SZ = 4096  # socket recv arg
 BACKLOG = 100  # socket listen arg
 TEST_BASE = 43544  # for testing use port numbers on localhost at TEST_BASE+n
@@ -38,7 +36,7 @@ class Method(Enum):
     
     def is_data_signal(self):
         return self in (Method.POPULATE, Method.INSERT)
-    
+
 @total_ordering 
 class BaseNode:
     def __init__(self, address=None):
@@ -92,7 +90,82 @@ class NodeServer:
         self.server.listen()
         print(f'> NODE SERVER :{self.server.getsockname()[1]}')
         return self.server.getsockname()
-    
+
+class ModRange(object):
+    """
+    Range-like object that wraps around 0 at some divisor using modulo arithmetic.
+    """
+    def __init__(self, start, stop, divisor):
+        self.divisor = divisor
+        self.start = start % self.divisor
+        self.stop = stop % self.divisor
+        # we want to use ranges to make things speedy, but if it wraps around the 0 node, we have to use two
+        if self.start < self.stop:
+            self.intervals = (range(self.start, self.stop),)
+        elif self.stop == 0:
+            self.intervals = (range(self.start, self.divisor),)
+        else:
+            self.intervals = (range(self.start, self.divisor), range(0, self.stop))
+
+    def __repr__(self):
+        """ Something like the interval|node charts in the paper """
+        return '[{}:{})%{}'.format(self.start, self.stop, self.divisor)
+
+    def __contains__(self, id):
+        """ Is the given id within this finger's interval? """
+        for interval in self.intervals:
+            if id in interval:
+                return True
+        return False
+
+    def __len__(self):
+        total = 0
+        for interval in self.intervals:
+            total += len(interval)
+        return total
+
+    def __iter__(self):
+        return ModRangeIter(self, 0, -1)
+
+class ModRangeIter(object):
+    """ Iterator class for ModRange """
+    def __init__(self, mr, i, j):
+        self.mr, self.i, self.j = mr, i, j
+
+    def __iter__(self):
+        return ModRangeIter(self.mr, self.i, self.j)
+
+    def __next__(self):
+        if self.j == len(self.mr.intervals[self.i]) - 1:
+            if self.i == len(self.mr.intervals) - 1:
+                raise StopIteration()
+            else:
+                self.i += 1
+                self.j = 0
+        else:
+            self.j += 1
+        return self.mr.intervals[self.i][self.j]
+
+class FingerEntry(object):
+    """
+    Row in a finger table.
+    """
+    def __init__(self, n, k, node=None):
+        if not (0 <= n < NODES and 0 < k <= M):
+            raise ValueError('invalid finger entry values')
+        self.start = (n + 2**(k-1)) % NODES
+        self.next_start = (n + 2**k) % NODES if k < M else n
+        self.interval = ModRange(self.start, self.next_start, NODES)
+        self.node = node
+
+    def __repr__(self):
+        """ Something like the interval|node charts in the paper """
+        return '[{},{}):{}'.format(self.start, self.next_start, self.node)
+
+    def __contains__(self, id):
+        """ Is the given id within this finger's interval? """
+        return id in self.interval
+ 
 class ChordNode(BaseNode, NodeServer):
     def __init__(self, num=None):
         """Initialize a new node"""
@@ -399,14 +472,15 @@ if __name__ == '__main__':
     node.serve()
     
     # TEST CASE FOR 3-BIT ADDRESS SPACE
-    # node 0 -> num 1
-    # node 1 -> num 2
-    # node 2 -> num 6
-    # node 3 -> num 21
-    # node 4 -> num 4
-    # node 5 -> num 12
-    # node 6 -> num 16
-    # node 7 -> num 9
+    # num to add to TEST_BASE to get port number and generate node id
+    # node id 0 -> num 1
+    # node id 1 -> num 2
+    # node id 2 -> num 6
+    # node id 3 -> num 21
+    # node id 4 -> num 4
+    # node id 5 -> num 12
+    # node id 6 -> num 16
+    # node id 7 -> num 9
     
       
     
