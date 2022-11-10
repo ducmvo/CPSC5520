@@ -8,6 +8,7 @@ connections (other nodes or queriers).
 You can use blocking TCP for this and pickle for the marshaling.
 """
 import sys
+import time
 import socket
 import pickle
 import threading
@@ -74,8 +75,27 @@ class BaseNode:
             else:
                 raise TypeError('data must be int or str')
         return int.from_bytes(_hash.digest(), 'big') % NODES
-
-class NodeServer:
+    
+    @staticmethod         
+    def validate(port, key=None, port_only=False):
+        if not port:
+            print('Error: Invalid input, port must be non-empty')
+            return False
+        
+        if  not port_only and not key:
+            print('Error: Invalid input, key, value must be non-empty')
+            return False
+        
+        try:
+            port = int(port)
+            if port > 65535 or port < 0:
+                raise ValueError
+        except ValueError:
+            print('Error: Invalid input, port must be an integer between 0 and 65535')
+            return False
+        return True
+    
+class NodeServer(BaseNode):
     def __init__(self) -> None:
         self.server = None
     
@@ -87,9 +107,35 @@ class NodeServer:
         address = ('localhost', num)
         self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server.bind(address)
-        self.server.listen()
+        self.server.listen(BACKLOG)
         print(f'> NODE SERVER :{self.server.getsockname()[1]}')
         return self.server.getsockname()
+    
+    @staticmethod
+    def send(conn, message=None, buffer_size=BUF_SZ):
+        """Serialized and send all data using passed in socket"""
+        data = pickle.dumps(message)
+        conn.sendall(data)
+
+    @staticmethod
+    def receive(conn, buffer_size=BUF_SZ, chunks=False):
+        """Receive raw data from a passed in socket
+        :return: deserialized data
+        """
+        data = b''
+        if chunks:
+            while True:
+                packet = conn.recv(BUF_SZ)
+                if not packet: break
+                data += packet
+        else:
+            data = conn.recv(buffer_size)
+        return pickle.loads(data)
+    
+    @staticmethod
+    def pr_now():
+        """Print current time in H:M:S.f format"""
+        return datetime.now().strftime('%H:%M:%S.%f')
 
 class ModRange(object):
     """
@@ -166,7 +212,7 @@ class FingerEntry(object):
         """ Is the given id within this finger's interval? """
         return id in self.interval
  
-class ChordNode(BaseNode, NodeServer):
+class ChordNode(NodeServer):
     def __init__(self, num=None):
         """Initialize a new node"""
         self.address = self.start_server(num)
@@ -307,8 +353,6 @@ class ChordNode(BaseNode, NodeServer):
         """ if s is i-th finger of n, update this node's finger table with s """        
         if (self.finger[i].start != self.finger[i].node
                  and s.id in ModRange(self.finger[i].start, self.finger[i].node.id, NODES)):
-            print('update_finger_table({},{}): {}[{}] = {} since {} in [{},{})'.format(
-                     s.id, i, self.id, i, s.id, s.id, self.finger[i].start, self.finger[i].node.id))
             self.finger[i].node = s
             p = self.predecessor
             if p != s:
@@ -420,33 +464,6 @@ class ChordNode(BaseNode, NodeServer):
         text += 'SUCCESSOR: {}\n'.format(self.successor)
         text += '========================\n'
         return text    
-    
-    @staticmethod
-    def send(conn, message=None, buffer_size=BUF_SZ):
-        """Serialized and send all data using passed in socket"""
-        data = pickle.dumps(message)
-        conn.sendall(data)
-
-    @staticmethod
-    def receive(conn, buffer_size=BUF_SZ, chunks=False):
-        """Receive raw data from a passed in socket
-        :return: deserialized data
-        """
-        data = b''
-        if chunks:
-            while True:
-                packet = conn.recv(BUF_SZ)
-                if not packet: break
-                data += packet
-        else:
-            data = conn.recv(buffer_size)
-        return pickle.loads(data)
-    
-    @staticmethod
-    def pr_now():
-        """Print current time in H:M:S.f format"""
-        return datetime.now().strftime('%H:%M:%S.%f')
-
 
 if __name__ == '__main__':
     if len(sys.argv) not in range(1, 4):

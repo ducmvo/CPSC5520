@@ -5,13 +5,10 @@ of the data file
 import sys
 import csv
 import socket
-import pickle
-from datetime import datetime
-from chord_node import Method, BaseNode as Node
+from chord_node import BaseNode as Node, NodeServer as Server, Method
 
-BUF_SZ = 4096
-ENABLE_CLI = True
-ENABLE_INSERT = False
+ENABLE_CLI = True  # enable command line arguments for port and filename
+ENABLE_INSERT = True  # user interface for inserting key-value pairs
 
 class ChordPopulate: 
     def populate(self, port, data=None, method=Method.POPULATE):
@@ -23,13 +20,13 @@ class ChordPopulate:
             except ConnectionRefusedError:
                 print('> Error: Connection refused, node may not be running')
                 sys.exit(1)
-            print(self.pr_now(), 'RPC: {} SEND {}'.format(server.getsockname()[1], method))   
-            self.send(server, (method, None, None)) # signal to populate/insert
-            res = self.receive(server) # receive confirmation
-            self.send(server, data)  # send data in chunks
+            print(Server.pr_now(), 'P-RPC: {} SEND {}'.format(server.getsockname()[1], method))   
+            Server.send(server, (method, None, None)) # signal to populate/insert
+            res = Server.receive(server) # receive confirmation
+            Server.send(server, data)  # send data in chunks
             server.shutdown(socket.SHUT_WR)   # close write side, wait for read
-            res = self.receive(server) # receive status
-            print(self.pr_now(), 'RPC: {} RECV {}'.format(server.getsockname()[1], res)) 
+            res = Server.receive(server) # receive status
+            print(Server.pr_now(), 'P-RPC: {} RECV {}'.format(server.getsockname()[1], res)) 
             server.close()
             return res
     
@@ -58,7 +55,7 @@ class ChordPopulate:
             key = input('Enter key to insert: ')
             value = input('Enter data to insert: ')
             
-            if not self.validate(port, key, value):
+            if not Node.validate(port, key, value):
                 continue
             
             # insertion
@@ -67,47 +64,8 @@ class ChordPopulate:
             if repeat not in ('y', 'Y', ''):
                 repeat = False
     
-    @staticmethod         
-    def validate(port, key=None, value=None, port_only=False):
-        if not port:
-            print('Error: Invalid input, port must be non-empty')
-            return False
-        
-        if  not port_only and (not key or not value):
-            print('Error: Invalid input, key, value must be non-empty')
-            return False
-        
-        try:
-            port = int(port)
-            if port > 65535 or port < 0:
-                raise ValueError
-        except ValueError:
-            print('Error: Invalid input, port must be an integer between 0 and 65535')
-            return False
-        return True
-
-    @staticmethod
-    def send(conn, message=None, buffer_size=BUF_SZ):
-        """Serialized and send all data using passed in socket"""
-        data = pickle.dumps(message)
-        conn.sendall(data)
-
-    @staticmethod
-    def receive(conn, buffer_size=BUF_SZ):
-        """Receive raw data from a passed in socket
-        :return: deserialized data
-        """
-        data = conn.recv(buffer_size)
-        return pickle.loads(data)
-    
-    @staticmethod
-    def pr_now():
-        """Print current time in H:M:S.f format"""
-        return datetime.now().strftime('%H:%M:%S.%f')
-    
 if __name__ == '__main__':
-    port = 43555
-    filename = 'Career_Stats_Passing.csv'
+    port, filename = 43555, 'Career_Stats_Passing.csv'
     
     if ENABLE_CLI and len(sys.argv) != 3:
         print('Usage: python chord_populate.py <port> <filename>')
@@ -121,7 +79,7 @@ if __name__ == '__main__':
     data = cp.parse(filename)
     
     
-    if not cp.validate(port, port_only=True):
+    if not Node.validate(port, port_only=True):
         sys.exit(1)
     
     # Method 1: insert each key-value pair one at a time
@@ -132,4 +90,4 @@ if __name__ == '__main__':
     # status = cp.populate(port, data)
     
     # run user interface
-    # ENABLE_INSERT and cp.run()
+    ENABLE_INSERT and cp.run()
