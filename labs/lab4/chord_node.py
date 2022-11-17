@@ -366,8 +366,7 @@ class ChordNode(NodeServer):
                  and s.id in ModRange(self.finger[i].start, self.finger[i].node.id, NODES)):
             self.finger[i].node = s
             p = self.predecessor
-            if p != s:
-                self.call_rpc(p, Method.UPDATE_FINGER_TABLE, s, i)
+            self.call_rpc(p, Method.UPDATE_FINGER_TABLE, s, i)
             
             print('UPDATED FINGER TABLE', self.pr_finger())
             
@@ -457,12 +456,13 @@ class ChordNode(NodeServer):
         else:
             return { 'status': 'ERROR', 'message': 'Unknown method {}'.format(method)}
      
-    def serve(self):
-        """Listen for ready connections to receive data"""
+    def serve(self, port=None):
+        """Listen for ready connections to receive data"""   
+        threading.Thread(target=self.join, args=(port,)).start()
         while True:
             client, _ = self.server.accept()
             threading.Thread(target=self.handle_rpc, args=(client,)).start()
-    
+            
     def pr_finger(self):
         """ Print the finger table """
         row = '{:>6} | {:<10} | {:<6}\n'
@@ -501,8 +501,8 @@ if __name__ == '__main__':
         num = int(sys.argv[2])
           
     node = ChordNode(num) # create a new node server
-    node.join(port)  # join the network
-    node.serve()
+    # node.join(port)  # join the network
+    node.serve(port)
     
     # TEST CASE FOR 3-BIT ADDRESS SPACE
     # num to add to TEST_BASE to get port number and generate node id
