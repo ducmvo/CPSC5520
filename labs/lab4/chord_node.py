@@ -145,7 +145,7 @@ class BaseNode(NodeServer):
         return self.id < other   
 
     @staticmethod
-    def hash(*data: str | int) -> int:
+    def hash(*data) -> int:
         _hash = sha1()
         for item in data:
             if isinstance(item, int):
