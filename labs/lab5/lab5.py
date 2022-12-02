@@ -43,7 +43,6 @@ HDR_SZ = 24 # size of the header in bytes
 BUF_SZ = 4096 # size of the buffer in bytes
 RUNNING = True  # global variable to stop threads
 
-NODE_ADDR = '5.200.2.180', 8333 # address of the node - backup
 NODE_ADDR = '8.209.105.138', 8333 # address of the node - backup
 NODE_ADDR = '94.75.198.120', 8333 # address of the node - using this one
 
