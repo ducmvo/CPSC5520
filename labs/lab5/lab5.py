@@ -15,9 +15,8 @@ then fix up the block to correctly represent this modified data
 REPORT
 Show with a program-generated report how the hash of the block has changed 
 and the ways in which this block would be rejected by peers in the network.
-Program written in Python 3 with no use of publicly available BitCoin libraries (except makeseeds as shown below).
+Program written in Python 3 with no use of publicly available BitCoin libraries.
 Use TCP/IP to communicate with a full node in the network.
-Submit the program in the usual way on cs1, all in one file, lab5.py.
 
 :Authors: Duc Vo
 :Version: 1
@@ -30,14 +29,9 @@ import socket
 import threading
 import hashlib
 import time
-from random import randbytes
+from random import getrandbits
 from hashlib import sha256
 from time import gmtime, strftime
-
-MY_PK66 = '029AC1D823A5926279B1EABB6A84E6A614340BA59423E200005A64AEB4B40904B1' # Public Key (compressed, 66 characters [0-9A-F])
-MY_PK130 = '049AC1D823A5926279B1EABB6A84E6A614340BA59423E200005A64AEB4B40904B157CB478E96D5E37C8902C31CAD21DB601625D21E2DE3F0A4B52008DEBB2A17E0' # Public Key (130 characters [0-9A-F])
-GENESIS = '6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000' # Genesis Block Hash
-STOP_BLOCK = '0000000000000000000000000000000000000000000000000000000000000000' # Stop Block Hash
 
 HDR_SZ = 24 # size of the header in bytes
 BUF_SZ = 4096 # size of the buffer in bytes
@@ -46,11 +40,20 @@ RUNNING = True  # global variable to stop threads
 NODE_ADDR = '8.209.105.138', 8333 # address of the node - backup
 NODE_ADDR = '94.75.198.120', 8333 # address of the node - using this one
 
-ENABLE_DETAIL_TRANSACTION = False # enable/disable detailed transaction inputs/outputs, set to False for TXIDs display only
-ENABLE_DISPLAY_GETBLOCKS = False # enable/disable display of getblocks messages
-ENABLE_DISPLAY_INV = False # enable/disable display of inv messages
-#############################################
-ENABLE_MODIFICATION_REPORT = True # enable/disable modification report
+STOP_BLOCK = '00' * 32 # Stop Block Hash
+GENESIS =  '6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000' # Genesis Block Hash
+
+MY_PK66 =  '029ac1d823a5926279b1eabb6a84e6a614340ba59423e200005a64aeb4b40904b1' # Public Key (compressed)
+MY_PK130 = '049ac1d823a5926279b1eabb6a84e6a614340ba59423e200005a64aeb4b40904b157cb478e96d5e37c8902c31cad21db601625d21e2de3f0a4b52008debb2a17e0' # Public Key
+
+
+################################################################################
+ENABLE_DETAIL_TRANSACTION = False # detailed transaction inputs/outputs, disable for TXIDs display only
+ENABLE_DISPLAY_GETBLOCKS = False # display of getblocks messages
+ENABLE_DISPLAY_INV = False # display of inv messages
+ENABLE_MINNING = False # minning
+ENABLE_MODIFICATION_REPORT = True # modification report
+################################################################################
 
 class Utility:
     """ Utility class provides helper functions to marshal/unmarshal bitcoin message data types """
@@ -190,7 +193,7 @@ class BitCoinPeer(Utility):
         (...by sending a 'ping' message ;) )"""
         global RUNNING
         RUNNING = False
-        self.send_message('ping', randbytes(8))
+        self.send_message('ping', self.uint64_t(getrandbits(64)))
     
     def marshall_message(self, cmd:str, payload:bytes=b''):
         """ Returns the byte representation of the given message 
@@ -340,8 +343,7 @@ class BitCoinPeer(Utility):
         print('\n')
         txn_list = new_txn_list
         return self.print_merkle_tree(new_txn_list)
-        
-             
+                   
     def save_blocks(self, blocks:bytes):
         """Store downloaded blocks in the dictionary indexed by height
         :param blocks: bytes of inv messages
@@ -360,7 +362,8 @@ class BitCoinPeer(Utility):
         while height > len(self.blocks):
             print('{:.^65}'.format(f'DOWNLOADING BLOCKS {len(self.blocks) + 1} - {500 + len(self.blocks)}'))
             block = self.latest_block
-            payload = bytes.fromhex('7f110100' + '01' + self.latest_block + STOP_BLOCK)
+            payload = self.uint32_t(70015) + self.uint8_t(1) 
+            payload += bytes.fromhex(self.latest_block + STOP_BLOCK)
             self.send_message('getblocks', payload)
             # wait for downloading blocks
             while block == self.latest_block:
@@ -377,7 +380,6 @@ class BitCoinPeer(Utility):
         self.send_message('getdata', payload)
         time.sleep(1)
         return self.block
-    
     
     def print_message(self, msg, text=None):
         """
@@ -499,11 +501,43 @@ class BitCoinPeer(Utility):
         original_merkle_root = b[36:68]
         modified_merkle_root = self.get_merkle_root(txn_list)
         b[36:68] = modified_merkle_root
-    
+        
+        print('→ minning block with modified payout address...')
+        start_time = time.time()
+        difficulty = self.unmarshal_uint(b'\xff' * 29) # 6 zeros
+        b[:80] = self.mine_block(b[:80], difficulty)
+        end_time = time.time()
+        
+        seconds_elapsed = end_time - start_time
+        hours, remain = divmod(seconds_elapsed, 3600)
+        minutes, seconds = divmod(remain, 60)
+        print('→ mined block duration {:02.0f}:{:02.0f}:{:02.0f}'.format(hours, minutes, seconds))
+        
         print('original ROOT: {}'.format(original_merkle_root.hex()))
         print('modified ROOT: {}'.format(modified_merkle_root.hex()))
         return b
 
+    def mine_block(self, b, difficulty=None):
+        """ Mine the given block
+        :param b: bitcoin block message
+        :param difficulty: difficulty target
+        :return: mined block
+        """
+        if difficulty is None:
+            difficulty = self.unmarshal_uint(b'\xff' * 32)
+            
+        b = bytearray(b)
+        nonce = 0
+        while ENABLE_MINNING:
+            b[76:80] = self.uint32_t(nonce)
+            block_hash = self._hash(b)
+            if self.unmarshal_uint(block_hash) <= difficulty:
+                print('nonce: {}'.format(nonce))
+                print('hash: {}'.format(block_hash.hex()))
+                break
+            nonce += 1
+        return b
+        
     def modify_transaction(self, b, modified=False, idx=1, script_type='p2pkh'):
         """ Modify a specific output address of a transaction by replacing the 
         PubKeyScript of the given transaction output
@@ -728,7 +762,3 @@ if __name__ == '__main__':
     peer.shutdown()
     sys.exit(0)
     
-
-    
-    
-   
